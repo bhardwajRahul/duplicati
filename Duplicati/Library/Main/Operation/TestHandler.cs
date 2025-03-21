@@ -53,14 +53,11 @@ namespace Duplicati.Library.Main.Operation
 
             using (var db = new LocalTestDatabase(m_options.Dbpath))
             {
-                db.SetResult(m_results);
                 Utility.UpdateOptionsFromDb(db, m_options);
                 Utility.VerifyOptionsAndUpdateDatabase(db, m_options);
                 db.VerifyConsistency(m_options.Blocksize, m_options.BlockhashSize, !m_options.DisableFilelistConsistencyChecks, null);
                 await FilelistProcessor.VerifyRemoteList(backendManager, m_options, db, m_results.BackendWriter, latestVolumesOnly: true, verifyMode: FilelistProcessor.VerifyMode.VerifyOnly, null).ConfigureAwait(false);
-
                 await DoRunAsync(samples, db, backendManager).ConfigureAwait(false);
-                db.WriteResults();
             }
         }
 
@@ -124,7 +121,7 @@ namespace Duplicati.Library.Main.Operation
                     {
                         m_results.AddResult(vol.Name, new KeyValuePair<Duplicati.Library.Interface.TestEntryStatus, string>[] { new KeyValuePair<Duplicati.Library.Interface.TestEntryStatus, string>(Duplicati.Library.Interface.TestEntryStatus.Error, ex.Message) });
                         Logging.Log.WriteErrorMessage(LOGTAG, "RemoteFileProcessingFailed", ex, "Failed to process file {0}", vol.Name);
-                        if (ex is System.Threading.ThreadAbortException)
+                        if (ex.IsAbortException())
                         {
                             m_results.EndTime = DateTime.UtcNow;
                             throw;
@@ -187,7 +184,7 @@ namespace Duplicati.Library.Main.Operation
                     {
                         m_results.AddResult(f.Name, [new KeyValuePair<TestEntryStatus, string>(TestEntryStatus.Error, ex.Message)]);
                         Logging.Log.WriteErrorMessage(LOGTAG, "FailedToProcessFile", ex, "Failed to process file {0}", f.Name);
-                        if (ex is ThreadAbortException || ex is TaskCanceledException)
+                        if (ex.IsAbortOrCancelException())
                         {
                             m_results.EndTime = DateTime.UtcNow;
                             throw;

@@ -37,6 +37,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Duplicati.Library.Common.IO;
+using Duplicati.StreamUtil;
 
 namespace Duplicati.Library.Utility
 {
@@ -296,11 +297,7 @@ namespace Duplicati.Library.Utility
                     var attr = attributeReader?.Invoke(rootpath) ?? FileAttributes.Directory;
                     lst.Push(rootpath);
                 }
-                catch (System.Threading.ThreadAbortException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
+                catch (Exception ex) when (!ex.IsAbortException())
                 {
                     errorCallback?.Invoke(rootpath, rootpath, ex);
                 }
@@ -321,21 +318,13 @@ namespace Duplicati.Library.Utility
                                 var attr = attributeReader?.Invoke(sf) ?? FileAttributes.Directory;
                                 lst.Push(sf);
                             }
-                            catch (System.Threading.ThreadAbortException)
-                            {
-                                throw;
-                            }
-                            catch (Exception ex)
+                            catch (Exception ex) when (!ex.IsAbortException())
                             {
                                 errorCallback?.Invoke(rootpath, sf, ex);
                             }
                         }
                     }
-                    catch (System.Threading.ThreadAbortException)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!ex.IsAbortException())
                     {
                         errorCallback?.Invoke(rootpath, f, ex);
                     }
@@ -347,11 +336,7 @@ namespace Duplicati.Library.Utility
                         {
                             files = fileList(f);
                         }
-                        catch (System.Threading.ThreadAbortException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
+                        catch (Exception ex) when (!ex.IsAbortException())
                         {
                             errorCallback?.Invoke(rootpath, f, ex);
                         }
@@ -1652,6 +1637,26 @@ namespace Duplicati.Library.Utility
         }
 
         /// <summary>
+        /// Checks if an exception is a stop, cancel or timeout exception
+        /// </summary>
+        /// <param name="ex">The operation to check</param>
+        /// <returns><c>true</c> if the exception is a stop or cancel exception, <c>false</c> otherwise</returns>
+        public static bool IsAbortOrCancelException(this Exception ex)
+        {
+            return ex is OperationCanceledException || ex is ThreadAbortException || ex is TaskCanceledException || ex is TimeoutException;
+        }
+
+        /// <summary>
+        /// Checks if an exception is a stop exception
+        /// </summary>
+        /// <param name="ex">The operation to check</param>
+        /// <returns><c>true</c> if the exception is a stop exception, <c>false</c> otherwise</returns>
+        public static bool IsAbortException(this Exception ex)
+        {
+            return ex is OperationCanceledException || ex is ThreadAbortException;
+        }
+
+        /// <summary>
         /// Formats the string using the invariant culture
         /// </summary>
         /// <param name="format">The format string</param>
@@ -1667,5 +1672,74 @@ namespace Duplicati.Library.Utility
         /// <returns>The formatted string</returns>
         public static string FormatInvariant(this FormattableString formattable)
             => formattable.ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// Performs the function with an additional timeout
+        /// </summary>
+        /// <param name="timeout">The timeout to observe</param>
+        /// <param name="token">The cancellation token</param>
+        /// <param name="func">The function to invoke</param>
+        /// <returns>The task</returns>
+        public static async Task WithTimeout(TimeSpan timeout, CancellationToken token, Func<CancellationToken, Task> func)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(timeout);
+            await func(cts.Token);
+        }
+
+        /// <summary>
+        /// Performs the function with an additional timeout
+        /// </summary>
+        /// <typeparam name="T">The return type</typeparam>
+        /// <param name="timeout">The timeout to observe</param>
+        /// <param name="token">The cancellation token</param>
+        /// <param name="func">The function to invoke</param>
+        /// <returns>The task</returns>
+        public static async Task<T> WithTimeout<T>(TimeSpan timeout, CancellationToken token, Func<CancellationToken, Task<T>> func)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(timeout);
+            return await func(cts.Token);
+        }
+
+        /// <summary>
+        /// Wraps the stream in a timeout observing stream
+        /// </summary>
+        /// <param name="stream">The stream to wrap</param>
+        /// <param name="timeout">The timeout to observe</param>
+        /// <param name="disposeBaseStream">A flag indicating if the base stream should be disposed</param>
+        /// <returns>The wrapped stream</returns>
+        public static Stream ObserveReadTimeout(this Stream stream, TimeSpan timeout, bool disposeBaseStream = true)
+        {
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+
+            return new TimeoutObservingStream(stream, disposeBaseStream)
+            {
+                ReadTimeout = timeout.Ticks > 0 && timeout != Timeout.InfiniteTimeSpan
+                    ? (int)timeout.TotalMilliseconds
+                    : Timeout.Infinite
+            };
+        }
+
+        /// <summary>
+        /// Wraps the stream in a timeout observing stream
+        /// </summary>
+        /// <param name="stream">The stream to wrap</param>
+        /// <param name="timeout">The timeout to observe</param>
+        /// <param name="disposeBaseStream">A flag indicating if the base stream should be disposed</param>
+        /// <returns>The wrapped stream</returns>
+        public static Stream ObserveWriteTimeout(this Stream stream, TimeSpan timeout, bool disposeBaseStream = true)
+        {
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+
+            return new TimeoutObservingStream(stream, disposeBaseStream)
+            {
+                WriteTimeout = timeout.Ticks > 0 && timeout != Timeout.InfiniteTimeSpan
+                    ? (int)timeout.TotalMilliseconds
+                    : Timeout.Infinite
+            };
+        }
     }
 }
